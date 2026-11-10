@@ -545,7 +545,12 @@ about a second, and again when its window comes back to the front, without a res
 tools that generate a colour scheme from your wallpaper or keep one scheme across your desktop
 and applications (pywal and matugen are two examples); have them write a `solidcraft-theme/1`
 file from a template. **Choose…** picks the file, **Stop following** (or choosing any theme)
-turns it off; it is off until you choose a file. Only a file that reads completely is applied:
+turns it off. It stays off until you choose a file, except on Linux: the first time the desktop
+app starts with no saved theme, it follows Omarchy's theme file when that file is already there
+(`$XDG_STATE_HOME/omarchy/current/theme/solidcraft.json`, or
+`~/.local/state/omarchy/current/theme/solidcraft.json` when `XDG_STATE_HOME` is unset or empty).
+A saved theme, including Dark, Light or System, and a follow path that was turned off, stay as
+they were. Only a file that reads completely is applied:
 while it is being written, or if it is broken, missing or larger than 256 KiB, the last good
 theme stays on and the setting says why. `solidcraft --theme-file my-theme.json` follows a file
 for one run without changing your preferences. The browser app has no file to follow; import the

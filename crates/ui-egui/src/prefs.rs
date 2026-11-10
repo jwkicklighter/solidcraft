@@ -1192,6 +1192,8 @@ preference_settings! {
     custom_themes: Vec<crate::theme_files::ThemeFile> = Vec::new();
     /// Desktop: a `solidcraft-theme/1` file another tool writes, followed as the theme and
     /// reloaded when it changes (#7573). Empty (the default): no file is followed.
+    /// On Linux, a first start with no saved theme preference follows Omarchy's
+    /// `solidcraft.json` when that file exists ([`default_omarchy_theme_follow`]).
     theme_follow: String = String::new(), PAGE_APPEARANCE;
     /// Per-theme overrides. Raw JSON retains entries from newer or hand-edited settings.
     theme_options: BTreeMap<String, BTreeMap<String, serde_json::Value>> = BTreeMap::new(), PAGE_APPEARANCE;
@@ -1743,6 +1745,61 @@ pub struct PrefsWindow {
     pub(crate) follow: crate::theme_files::Follow,
     /// Where the theme Import tile was drawn last frame: a file dropped there is a theme (#8226).
     import_tile: Option<egui::Rect>,
+}
+
+/// Whether `stored` has no saved theme preference.
+///
+/// Preferences are one JSON document. `Prefs` fills a missing field from its default, and a
+/// save writes every field, so a key that is present was saved. That includes `theme` set to
+/// `dark`, `light` or `system`, and `theme_follow` set to `""` (follow turned off). A document
+/// from before the theme was a preference still has the top-level `dark` flag, which is that
+/// choice. Missing or blank storage is a first run. A document that does not parse, or is not
+/// an object, is left alone: it is not treated as a first run.
+pub fn theme_preference_unset(stored: Option<&str>) -> bool {
+    let Some(stored) = stored.map(str::trim).filter(|text| !text.is_empty()) else {
+        return true;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(stored) else {
+        return false;
+    };
+    let Some(root) = value.as_object() else {
+        return false;
+    };
+    let prefs = root.get("preferences").and_then(serde_json::Value::as_object);
+    let theme = prefs.is_some_and(|prefs| prefs.contains_key("theme"));
+    let follow = prefs.is_some_and(|prefs| prefs.contains_key("theme_follow"));
+    let legacy_dark = root.contains_key("dark");
+    !theme && !follow && !legacy_dark
+}
+
+/// Where Omarchy writes SolidCraft's theme file.
+///
+/// `$XDG_STATE_HOME/omarchy/current/theme/solidcraft.json`. When `XDG_STATE_HOME` is missing or
+/// empty, the path is `$HOME/.local/state/omarchy/current/theme/solidcraft.json`. `None` when
+/// neither directory can be formed.
+pub fn omarchy_theme_path(xdg_state_home: Option<&std::ffi::OsStr>, home: Option<&std::ffi::OsStr>) -> Option<std::path::PathBuf> {
+    let base = match xdg_state_home {
+        Some(dir) if !dir.is_empty() => std::path::PathBuf::from(dir),
+        _ => {
+            let home = home.filter(|dir| !dir.is_empty())?;
+            std::path::PathBuf::from(home).join(".local").join("state")
+        }
+    };
+    Some(base.join("omarchy").join("current").join("theme").join("solidcraft.json"))
+}
+
+/// The Omarchy theme file to follow when no theme preference is saved and `candidate` is a file.
+///
+/// `None` when a theme choice is already stored, or when the file is missing. The desktop app
+/// calls this on Linux only. The browser does not call it.
+pub fn default_omarchy_theme_follow(stored: Option<&str>, candidate: Option<&std::path::Path>) -> Option<String> {
+    if !theme_preference_unset(stored) {
+        return None;
+    }
+    let path = candidate.filter(|path| path.is_file())?;
+    let text = path.to_str()?;
+    let path = crate::theme_files::follow_path(text).ok()?;
+    (!path.is_empty()).then_some(path)
 }
 
 /// Following a theme file needs the file system: the desktop app only (#7573).
@@ -13176,6 +13233,74 @@ mod settings_search_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn omarchy_theme_path_uses_xdg_state_home_or_home() {
+        let home = std::ffi::OsStr::new("/home/ada");
+        let xdg = std::ffi::OsStr::new("/var/state");
+        let expected = |base: &str| std::path::PathBuf::from(base).join("omarchy").join("current").join("theme").join("solidcraft.json");
+        assert_eq!(super::omarchy_theme_path(Some(xdg), Some(home)), Some(expected("/var/state")));
+        assert_eq!(super::omarchy_theme_path(Some(xdg), None), Some(expected("/var/state")));
+        assert_eq!(super::omarchy_theme_path(Some(std::ffi::OsStr::new("")), Some(home)), Some(expected("/home/ada/.local/state")));
+        assert_eq!(super::omarchy_theme_path(None, Some(home)), Some(expected("/home/ada/.local/state")));
+        assert_eq!(super::omarchy_theme_path(None, Some(std::ffi::OsStr::new("state"))), Some(expected("state/.local/state")));
+        assert_eq!(super::omarchy_theme_path(None, None), None);
+        assert_eq!(super::omarchy_theme_path(None, Some(std::ffi::OsStr::new(""))), None);
+        assert_eq!(super::omarchy_theme_path(Some(std::ffi::OsStr::new("state")), Some(home)), Some(expected("state")));
+    }
+
+    /// A first run follows Omarchy's file. A saved theme, including Dark, Light, System, the
+    /// legacy dark flag, or follow turned off, does not. A missing file does not.
+    #[test]
+    fn omarchy_follow_starts_only_when_no_theme_preference_is_saved_and_the_file_exists() {
+        let dir = std::env::temp_dir().join(format!("solidcraft-omarchy-theme-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("solidcraft.json");
+        std::fs::write(&file, "{}\n").unwrap();
+        let missing = dir.join("missing.json");
+        let directory = dir.join("not-a-file");
+        std::fs::create_dir_all(&directory).unwrap();
+
+        assert!(super::theme_preference_unset(None));
+        assert!(super::theme_preference_unset(Some("")));
+        assert!(super::theme_preference_unset(Some("   ")));
+        assert!(super::theme_preference_unset(Some("{}")));
+        assert!(super::theme_preference_unset(Some(r#"{"preferences":{"language":"en"}}"#)));
+        assert!(!super::theme_preference_unset(Some("not json")));
+        assert!(!super::theme_preference_unset(Some("[]")));
+        assert!(!super::theme_preference_unset(Some("null")));
+        assert!(!super::theme_preference_unset(Some(r#"{"dark":true}"#)));
+        assert!(!super::theme_preference_unset(Some(r#"{"dark":false,"preferences":{}}"#)));
+        for theme in ["dark", "light", "system", "gruvbox-dark"] {
+            let stored = format!(r#"{{"preferences":{{"theme":"{theme}"}}}}"#);
+            assert!(!super::theme_preference_unset(Some(&stored)), "{theme}");
+        }
+        assert!(!super::theme_preference_unset(Some(r#"{"preferences":{"theme_follow":""}}"#)));
+        assert!(!super::theme_preference_unset(Some(r#"{"preferences":{"theme":"dark","theme_follow":"/kept.json"}}"#)));
+
+        let followed = super::default_omarchy_theme_follow(None, Some(&file)).unwrap();
+        assert_eq!(followed, file.to_str().unwrap());
+        for stored in [Some(""), Some("{}"), Some(r#"{"preferences":{"language":"en","ui_scale":1.0}}"#)] {
+            assert_eq!(super::default_omarchy_theme_follow(stored, Some(&file)).as_deref(), Some(followed.as_str()), "{stored:?}");
+        }
+        assert!(super::default_omarchy_theme_follow(None, None).is_none());
+        assert!(super::default_omarchy_theme_follow(None, Some(&missing)).is_none());
+        assert!(super::default_omarchy_theme_follow(None, Some(&directory)).is_none());
+        for stored in [
+            r#"{"preferences":{"theme":"dark"}}"#,
+            r#"{"preferences":{"theme":"light"}}"#,
+            r#"{"preferences":{"theme":"system"}}"#,
+            r#"{"preferences":{"theme_follow":""}}"#,
+            r#"{"preferences":{"theme_follow":"/other.json"}}"#,
+            r#"{"dark":true}"#,
+            r#"{"dark":false}"#,
+            "not json",
+            "[]",
+        ] {
+            assert!(super::default_omarchy_theme_follow(Some(stored), Some(&file)).is_none(), "{stored}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

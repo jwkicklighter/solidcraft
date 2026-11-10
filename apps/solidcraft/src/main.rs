@@ -908,6 +908,28 @@ fn restore_preferences(app: &mut SolveApp, stored_ui: Option<&str>, saved_graphi
     // Even safe mode edits the real graphics.json. Keep its choices in Preferences so an
     // anti-aliasing change cannot erase them; safe mode's renderer still uses its own defaults.
     restore_graphics_preferences(app, saved_graphics);
+    // Safe mode stays on the built-in theme. A saved theme choice is already in `stored_ui`.
+    if !safe_mode {
+        apply_omarchy_theme_default(app, stored_ui);
+    }
+}
+
+/// Linux: when no theme preference has been saved, follow Omarchy's theme file if it exists.
+/// Other desktops do nothing. Choosing a theme, or turning follow off, writes `theme` or
+/// `theme_follow`, and a later start leaves that choice alone.
+fn apply_omarchy_theme_default(app: &mut SolveApp, stored_ui: Option<&str>) {
+    #[cfg(target_os = "linux")]
+    {
+        let candidate =
+            solidcraft_ui_egui::prefs::omarchy_theme_path(std::env::var_os("XDG_STATE_HOME").as_deref(), std::env::var_os("HOME").as_deref());
+        if let Some(path) = solidcraft_ui_egui::prefs::default_omarchy_theme_follow(stored_ui, candidate.as_deref()) {
+            app.preferences.theme_follow = path;
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (app, stored_ui);
+    }
 }
 
 /// Restore startup choices after loading the separately saved UI preferences.

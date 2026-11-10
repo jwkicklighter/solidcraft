@@ -43,7 +43,7 @@ first, then the theme's own.
 | Background | Segmented: Theme's gradient / Colour, plus a hex field "#FFFFFF" | `Prefs.viewport_background` (`None` = the theme's gradient; `Some([r,g,b])` = Colour) | `None` | none | none | The hex field is active only for Colour. |
 | 3D view colours | Segmented: Theme's own / Light / Dark | `Prefs.viewport_theme` (`ViewportTheme`) | Theme | none | none | |
 | Logo | Segmented: Theme's colours / Accent | `Prefs.logo_accent` | `false` | none | none | |
-| Follow a theme file | Checkbox + "Choose..." button + badge "Desktop only" | `Prefs.theme_follow` (path; empty = off) | empty | "Reloads when another tool rewrites the file." | none | "Desktop only" is a badge: the control is hidden or disabled on the web build. |
+| Follow a theme file | Checkbox + "Choose..." button + badge "Desktop only" | `Prefs.theme_follow` (path; empty = off) | empty | "Reloads when another tool rewrites the file." | none | "Desktop only" is a badge: the control is hidden or disabled on the web build. On Linux, a first run with no saved theme follows Omarchy's `solidcraft.json` when that file exists (`$XDG_STATE_HOME/omarchy/current/theme/solidcraft.json`, or `~/.local/state/...` when `XDG_STATE_HOME` is unset or empty). A saved theme or an empty follow path stays as it was. |
 
 ## Scale and text
 
